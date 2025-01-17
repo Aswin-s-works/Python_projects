@@ -1,1 +1,148 @@
+import sys
+import os
+import json
+from PyQt5.QtWidgets import (
+    QApplication, QMainWindow, QTabWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
+    QLineEdit, QFileDialog, QWidget, QAction, QMessageBox
+)
+from PyQt5.QtWebEngineWidgets import QWebEngineView
+from PyQt5.QtCore import QUrl
+
+HISTORY_FILE = "history.json"
+BOOKMARKS_FILE = "bookmarks.json"
+
+def load_json(file_path, default_value):
+    try:
+        with open(file_path, "r") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return default_value
+
+def save_json(file_path, data):
+    with open(file_path, "w") as f:
+        json.dump(data, f, indent=4)
+
+class BrowserTab(QWebEngineView):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.urlChanged.connect(self.update_history)
+        self.page().profile().downloadRequested.connect(self.handle_download)
+
+    def update_history(self, url):
+        if url.toString() != "about:blank":
+            history = load_json(HISTORY_FILE, [])
+            history.append(url.toString())
+            save_json(HISTORY_FILE, history[-50:])  # Keep last 50 entries
+
+    def handle_download(self, download):
+        save_path, _ = QFileDialog.getSaveFileName(self, "Save File As", download.path())
+        if save_path:
+            download.setPath(save_path)
+            download.accept()
+            QMessageBox.information(self, "Download", f"File saved to: {save_path}")
+
+class WebBrowser(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.tabs = QTabWidget()
+        self.tabs.setTabsClosable(True)
+        self.tabs.tabCloseRequested.connect(self.close_tab)
+        self.setCentralWidget(self.tabs)
+        self.add_new_tab(QUrl("https://www.google.com"), "New Tab")
+        
+        menu_bar = self.menuBar()
+        file_menu = menu_bar.addMenu("File")
+        view_menu = menu_bar.addMenu("View")
+        
+        file_menu.addAction("New Tab", self.add_new_tab)
+        file_menu.addAction("Exit", self.close)
+        view_menu.addAction("View Bookmarks", self.view_bookmarks)
+        view_menu.addAction("View History", self.view_history)
+
+        self.toolbar = QWidget()
+        self.layout = QHBoxLayout()
+        
+        self.back_btn = QPushButton("←")
+        self.back_btn.clicked.connect(lambda: self.current_browser().back())
+        self.forward_btn = QPushButton("→")
+        self.forward_btn.clicked.connect(lambda: self.current_browser().forward())
+        self.reload_btn = QPushButton("⟳")
+        self.reload_btn.clicked.connect(lambda: self.current_browser().reload())
+        self.home_btn = QPushButton("🏠")
+        self.home_btn.clicked.connect(lambda: self.current_browser().setUrl(QUrl("https://www.google.com")))
+        self.url_bar = QLineEdit()
+        self.url_bar.returnPressed.connect(self.navigate_to_url)
+        self.new_tab_btn = QPushButton("+")
+        self.new_tab_btn.clicked.connect(lambda: self.add_new_tab(QUrl("https://www.google.com"), "New Tab"))
+        self.bookmark_btn = QPushButton("⭐")
+        self.bookmark_btn.clicked.connect(self.add_bookmark)
+        self.download_btn = QPushButton("⬇")
+        self.download_btn.clicked.connect(self.open_downloads)
+        
+        for btn in [self.back_btn, self.forward_btn, self.reload_btn, self.home_btn, self.url_bar, self.new_tab_btn, self.bookmark_btn, self.download_btn]:
+            self.layout.addWidget(btn)
+        
+        self.toolbar.setLayout(self.layout)
+        self.toolbar.setFixedHeight(50)
+        
+        main_layout = QVBoxLayout()
+        main_layout.addWidget(self.toolbar)
+        main_layout.addWidget(self.tabs)
+        container = QWidget()
+        container.setLayout(main_layout)
+        self.setCentralWidget(container)
+        
+        self.setWindowTitle("Browser")
+        self.setGeometry(100, 100, 1200, 800)
+        self.tabs.currentChanged.connect(self.update_url_bar)
+    
+    def add_new_tab(self, url=QUrl("https://www.google.com"), title="New Tab"):
+        browser = BrowserTab()
+        browser.setUrl(url)
+        index = self.tabs.addTab(browser, title)
+        self.tabs.setCurrentIndex(index)
+        browser.urlChanged.connect(lambda url: self.update_url_bar(url, browser))
+    
+    def close_tab(self, index):
+        if self.tabs.count() > 1:
+            self.tabs.removeTab(index)
+    
+    def current_browser(self):
+        return self.tabs.currentWidget()
+    
+    def navigate_to_url(self):
+        url = self.url_bar.text()
+        if not url.startswith("http"):
+            url = "https://" + url
+        self.current_browser().setUrl(QUrl(url))
+    
+    def update_url_bar(self, url=None, browser=None):
+        if browser and browser != self.current_browser():
+            return
+        self.url_bar.setText(self.current_browser().url().toString())
+    
+    def add_bookmark(self):
+        url = self.url_bar.text()
+        bookmarks = load_json(BOOKMARKS_FILE, [])
+        bookmarks.append(url)
+        save_json(BOOKMARKS_FILE, bookmarks)
+        QMessageBox.information(self, "Bookmark", f"Bookmarked: {url}")
+    
+    def view_bookmarks(self):
+        bookmarks = load_json(BOOKMARKS_FILE, [])
+        QMessageBox.information(self, "Bookmarks", "\n".join(bookmarks) if bookmarks else "No bookmarks saved.")
+    
+    def view_history(self):
+        history = load_json(HISTORY_FILE, [])
+        QMessageBox.information(self, "History", "\n".join(history) if history else "No history available.")
+    
+    def open_downloads(self):
+        downloads_folder = os.path.expanduser("~/Downloads")
+        os.startfile(downloads_folder) if os.name == "nt" else os.system(f"xdg-open {downloads_folder}")
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    window = WebBrowser()
+    window.show()
+    sys.exit(app.exec_())
 
